@@ -21,39 +21,43 @@ class EEGPreprocessor:
         )
         return raw_filtered
 
-    def fit_ica(self, raw: mne.io.Raw, n_components=15, random_state=42):
+    def fit_ica(self, raw: mne.io.Raw, n_components=10, random_state=42):
         self.ica = mne.preprocessing.ICA(
             n_components=n_components,
             random_state=random_state,
             method="fastica",
-            max_iter="auto",
+            max_iter=800,
         )
+        # High-pass filter at 1Hz is recommended for better ICA stability
         raw_ica_ready = raw.copy().filter(l_freq=1.0, h_freq=None, verbose=False)
         self.ica.fit(raw_ica_ready, picks="eeg")
         return self.ica
 
     def remove_eog_artifacts(
-        self, raw: mne.io.Raw, eog_channel=None
+        self, raw: mne.io.Raw, ica: mne.preprocessing.ICA = None, eog_channel=None
     ) -> mne.io.Raw:
-        if self.ica is None:
-            raise ValueError("First run fit_ica before cleaning.")
+        target_ica = ica if ica is not None else self.ica
+        
+        if target_ica is None:
+            raise ValueError("ICA instance is required. Run fit_ica or provide an ICA object.")
 
         raw_clean = raw.copy()
 
         if eog_channel and eog_channel in raw.ch_names:
-            eog_indices, _ = self.ica.find_bads_eog(raw, ch_name=eog_channel)
-            self.ica.exclude = eog_indices
+            eog_indices, _ = target_ica.find_bads_eog(raw, ch_name=eog_channel)
+            target_ica.exclude = eog_indices
         else:
+            # Fallback to frontal channels for EOG proxy if no dedicated EOG channel exists
             frontal_chs = [
                 ch
                 for ch in ["Fp1", "FP1", "Fp2", "FP2", "AF3", "AF4"]
                 if ch in raw.ch_names
             ]
             if frontal_chs:
-                eog_indices, _ = self.ica.find_bads_eog(
+                eog_indices, _ = target_ica.find_bads_eog(
                     raw, ch_name=frontal_chs[0]
                 )
-                self.ica.exclude = eog_indices
+                target_ica.exclude = eog_indices
         
-        self.ica.apply(raw_clean)
+        target_ica.apply(raw_clean)
         return raw_clean
